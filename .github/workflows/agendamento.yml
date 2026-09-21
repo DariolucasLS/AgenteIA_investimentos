@@ -9,6 +9,7 @@ on:
 jobs:
   executar-agente:
     runs-on: ubuntu-latest
+    timeout-minutes: 10 # Limite de tempo de segurança para o job inteiro
 
     steps:
       - name: Baixar o código do repositório
@@ -24,9 +25,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-genai yfinance
 
-      - name: Executar o script main.py
+      - name: Executar o script main.py (com retentativas automáticas)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 3      # Tempo máximo para cada execução do script
+          max_attempts: 4         # Tenta até 4 vezes em caso de erro de servidor
+          retry_wait_seconds: 15  # Espera 15 segundos de intervalo entre as tentativas
+          command: python main.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
-        run: python main.py
