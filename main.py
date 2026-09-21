@@ -98,7 +98,7 @@ def gerar_textos_ia(texto_dados):
         return json.loads(response.text)
     except Exception as e:
         response = client.models.generate_content(
-            model="gemini-2.5-pro", contents=prompt, config=config
+            model="gemini-2.5-flash", contents=prompt, config=config
         )
         return json.loads(response.text)
 
