@@ -1,9 +1,11 @@
 import json
 import os
 import smtplib
+import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from google import genai
+from tenacity import retry, stop_after_attempt, wait_exponential
 import yfinance as yf
 
 # ==========================================
@@ -38,7 +40,9 @@ def processar_dados_acoes(tickers):
             diff_mm5 = ((preco_atual - mm5) / mm5) * 100
 
             vol_str = (
-                f"{volume/1e6:.1f}M" if volume >= 1e6 else f"{volume/1e3:.1f}K"
+                f"{volume/1e6:.1f}M"
+                if volume >= 1e6
+                else f"{volume/1e3:.1f}K"
             )
             status_mm5 = "Acima" if preco_atual >= mm5 else "Abaixo"
 
@@ -63,8 +67,23 @@ def processar_dados_acoes(tickers):
 
 
 # ==========================================
-# 3. GERAÇÃO DO CONTEÚDO TEXTUAL VIA GEMINI (JSON)
+# 3. GERAÇÃO DO CONTEÚDO TEXTUAL VIA GEMINI (RESILIÊNCIA + TENACITY)
 # ==========================================
+@retry(
+    stop=stop_after_attempt(3),  # Tenta até 3 vezes por modelo
+    wait=wait_exponential(
+        multiplier=1, min=2, max=10
+    ),  # Espera 2s, 4s, 8s entre retentativas
+    reraise=True,
+)
+def requisitar_gemini(client, model_name, prompt, config):
+    print(f"Tentando gerar análise com o modelo: {model_name}...")
+    response = client.models.generate_content(
+        model=model_name, contents=prompt, config=config
+    )
+    return json.loads(response.text)
+
+
 def gerar_textos_ia(texto_dados):
     client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -91,16 +110,25 @@ def gerar_textos_ia(texto_dados):
 
     config = {"response_mime_type": "application/json", "temperature": 0.1}
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash", contents=prompt, config=config
-        )
-        return json.loads(response.text)
-    except Exception as e:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash", contents=prompt, config=config
-        )
-        return json.loads(response.text)
+    # Modelos ativos em ordem de preferência
+    modelos_fallback = [
+        "gemini-3.6-flash",  # Principal
+        "gemini-2.5-flash",  # Fallback 1
+        "gemini-2.5-flash-lite",  # Fallback 2
+    ]
+
+    for modelo in modelos_fallback:
+        try:
+            return requisitar_gemini(client, modelo, prompt, config)
+        except Exception as e:
+            print(
+                f"Aviso: O modelo '{modelo}' falhou após 3 tentativas ({e}). Tentando o próximo..."
+            )
+            time.sleep(3)  # Pausa de segurança antes do próximo modelo
+
+    raise RuntimeError(
+        "Erro crítico: Todos os modelos do Gemini falharam ou estão indisponíveis no momento."
+    )
 
 
 # ==========================================
